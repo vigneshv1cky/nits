@@ -7,14 +7,10 @@ including external monitors over DDC/CI.
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black)
 ![Licence](https://img.shields.io/badge/licence-AGPL--3.0-black)
 
-## Screenshots
+## Screenshot
 
 <p align="center">
   <img src="docs/window.png" width="420" alt="The Nits window, showing brightness and contrast for each connected display">
-</p>
-
-<p align="center">
-  <img src="docs/menubar.png" width="320" alt="The Nits menu bar panel">
 </p>
 
 ## Why
