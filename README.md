@@ -5,6 +5,7 @@ including external monitors over DDC/CI.
 
 ![macOS](https://img.shields.io/badge/macOS-12%2B-black)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black)
+![Licence](https://img.shields.io/badge/licence-Unlicense-black)
 
 ## Why
 
@@ -81,4 +82,5 @@ present in macOS. The result is a ~120 KB executable.
 
 ## Licence
 
-MIT
+[The Unlicense](https://unlicense.org) — public domain. Copy it, change it, ship it,
+sell it, no attribution required.
