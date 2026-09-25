@@ -5,7 +5,17 @@ including external monitors over DDC/CI.
 
 ![macOS](https://img.shields.io/badge/macOS-12%2B-black)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-black)
-![Licence](https://img.shields.io/badge/licence-Unlicense-black)
+![Licence](https://img.shields.io/badge/licence-AGPL--3.0-black)
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/window.png" width="420" alt="The Nits window, showing brightness and contrast for each connected display">
+</p>
+
+<p align="center">
+  <img src="docs/menubar.png" width="320" alt="The Nits menu bar panel">
+</p>
 
 ## Why
 
@@ -82,5 +92,8 @@ present in macOS. The result is a ~120 KB executable.
 
 ## Licence
 
-[The Unlicense](https://unlicense.org) — public domain. Copy it, change it, ship it,
-sell it, no attribution required.
+[GNU Affero General Public License v3.0](LICENSE).
+
+You may use, modify and redistribute this freely. If you distribute a modified
+version, or run one as a network service, you must release your source under the
+same licence.
