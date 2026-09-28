@@ -91,6 +91,8 @@ static DDCState ddcSetOn(IOAVServiceRef av, uint8_t vcp, uint16_t v) {
 @property BOOL builtin;
 @property (assign) IOAVServiceRef av;
 @property BOOL nativeBrightness;
+@property double curB;
+@property (strong) NSTimer *fade;
 @property DDCState state;
 @property (strong) NSTextField *wStatus;
 // ui
@@ -115,11 +117,11 @@ static DDCState ddcSetOn(IOAVServiceRef av, uint8_t vcp, uint16_t v) {
         if (e.scrollingDeltaY == 0) return;
         step = (e.scrollingDeltaY > 0) ? 1 : -1;
     }
-    int nv = self.intValue + step * 2;
-    if (nv < (int)self.minValue) nv = (int)self.minValue;
-    if (nv > (int)self.maxValue) nv = (int)self.maxValue;
-    if (nv == self.intValue) return;
-    self.intValue = nv;
+    double nv = self.doubleValue + step * 1.5;
+    if (nv < self.minValue) nv = self.minValue;
+    if (nv > self.maxValue) nv = self.maxValue;
+    if (fabs(nv - self.doubleValue) < 0.01) return;
+    self.doubleValue = nv;
     [NSApp sendAction:self.action to:self.target from:self];
 }
 @end
@@ -139,7 +141,7 @@ static DDCState ddcSetOn(IOAVServiceRef av, uint8_t vcp, uint16_t v) {
         step = (e.scrollingDeltaY > 0) ? 1 : -1;
     }
     if ([self.handler respondsToSelector:@selector(scrollStep:)])
-        [self.handler performSelector:@selector(scrollStep:) withObject:@(step * 2)];
+        [self.handler performSelector:@selector(scrollStep:) withObject:@(step * 1.5)];
 }
 - (void)mouseDown:(NSEvent *)e { [self.superview mouseDown:e]; }
 @end
@@ -183,18 +185,43 @@ static NSArray<Disp *> *enumerateDisplays(void) {
     return [NSString stringWithFormat:@"%@.%u.%@", d.builtin?@"int":@"ext", d.did, s];
 }
 
-- (void)applyBrightness:(int)v to:(Disp *)d {
-    if (v<0) v=0; if (v>100) v=100;
+- (void)writeBrightness:(double)v to:(Disp *)d {
+    if (v < 0) v = 0; if (v > 100) v = 100;
+    d.curB = v;
     if (d.nativeBrightness) {
-        DisplayServicesSetBrightness(d.did, v/100.0f);
+        DisplayServicesSetBrightness(d.did, (float)(v / 100.0));   // full float precision
     } else {
-        d.state = ddcSetOn(d.av, 0x10, v);
+        d.state = ddcSetOn(d.av, 0x10, (uint16_t)llround(v));      // DDC is integer-only
         [self refreshStatus:d];
     }
-    d.wB.intValue=v; d.mB.intValue=v;
-    d.wBVal.stringValue=[NSString stringWithFormat:@"%d",v];
-    d.mBLab.stringValue=[NSString stringWithFormat:@"Brightness   %d",v];
-    [[NSUserDefaults standardUserDefaults] setInteger:v forKey:[self keyFor:d suffix:@"b"]];
+    int shown = (int)llround(v);
+    d.wBVal.stringValue = [NSString stringWithFormat:@"%d", shown];
+    d.mBLab.stringValue = [NSString stringWithFormat:@"Brightness   %d", shown];
+    [[NSUserDefaults standardUserDefaults] setDouble:v forKey:[self keyFor:d suffix:@"b"]];
+}
+
+// immediate: used while dragging a slider or scrolling
+- (void)applyBrightness:(double)v to:(Disp *)d {
+    [d.fade invalidate]; d.fade = nil;
+    [self writeBrightness:v to:d];
+    d.wB.doubleValue = v; d.mB.doubleValue = v;
+}
+
+// eased: used by the presets, so they glide the way the system keys do
+- (void)glideBrightness:(double)target to:(Disp *)d {
+    [d.fade invalidate];
+    double start = d.curB, delta = target - start;
+    if (fabs(delta) < 0.5) { [self applyBrightness:target to:d]; return; }
+    NSDate *t0 = [NSDate date];
+    const double dur = 0.28;
+    d.fade = [NSTimer scheduledTimerWithTimeInterval:1.0/90.0 repeats:YES block:^(NSTimer *tm){
+        double p = [[NSDate date] timeIntervalSinceDate:t0] / dur;
+        if (p >= 1.0) { p = 1.0; [tm invalidate]; d.fade = nil; }
+        double eased = 1.0 - pow(1.0 - p, 3.0);          // ease-out cubic
+        double v = start + delta * eased;
+        [self writeBrightness:v to:d];
+        d.wB.doubleValue = v; d.mB.doubleValue = v;
+    }];
 }
 
 - (void)applyContrast:(int)v to:(Disp *)d {
@@ -228,21 +255,21 @@ static NSArray<Disp *> *enumerateDisplays(void) {
     }
 }
 
-- (void)bMoved:(NSSlider *)s { [self applyBrightness:s.intValue to:(Disp *)objc_getAssociatedObject(s,"d")]; }
+- (void)bMoved:(NSSlider *)s { [self applyBrightness:s.doubleValue to:(Disp *)objc_getAssociatedObject(s,"d")]; }
 - (void)cMoved:(NSSlider *)s { [self applyContrast:s.intValue to:(Disp *)objc_getAssociatedObject(s,"d")]; }
 - (void)preset:(id)s {
     Disp *d = (Disp *)objc_getAssociatedObject(s,"d");
-    [self applyBrightness:(int)[(NSControl *)s tag] to:d];
+    [self glideBrightness:(double)[(NSControl *)s tag] to:d];
 }
 - (void)resetC:(id)s { [self applyContrast:75 to:(Disp *)objc_getAssociatedObject(s,"d")]; }
-- (void)allPreset:(NSMenuItem *)mi { for (Disp *d in self.displays) [self applyBrightness:(int)mi.tag to:d]; }
+- (void)allPreset:(NSMenuItem *)mi { for (Disp *d in self.displays) [self glideBrightness:(double)mi.tag to:d]; }
 - (void)scrollStep:(NSNumber *)n {
     Disp *t = nil;
     for (Disp *d in self.displays) if (!d.builtin && d.state==DDCOk) { t = d; break; }
     if (!t) for (Disp *d in self.displays) if (!d.builtin) { t = d; break; }
     if (!t) t = self.displays.firstObject;
     if (!t) return;
-    [self applyBrightness:t.wB.intValue + n.intValue to:t];
+    [self applyBrightness:t.curB + n.doubleValue to:t];
 }
 
 - (void)showWindow:(id)s { [self.win makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; }
@@ -262,12 +289,12 @@ static NSArray<Disp *> *enumerateDisplays(void) {
     s.minValue=0; s.maxValue=100; s.continuous=YES; s.target=self; s.action=a;
     objc_setAssociatedObject(s,"d",d,OBJC_ASSOCIATION_RETAIN); return s;
 }
-- (int)storedB:(Disp *)d {
+- (double)storedB:(Disp *)d {
     NSUserDefaults *u=[NSUserDefaults standardUserDefaults];
     NSString *k=[self keyFor:d suffix:@"b"];
-    if ([u objectForKey:k]) return (int)[u integerForKey:k];
-    if (d.builtin) { float f=0.5f; DisplayServicesGetBrightness(d.did,&f); return (int)roundf(f*100); }
-    return 40;
+    if ([u objectForKey:k]) return [u doubleForKey:k];
+    if (d.nativeBrightness) { float f=0.5f; DisplayServicesGetBrightness(d.did,&f); return f*100.0; }
+    return 40.0;
 }
 - (int)storedC:(Disp *)d {
     NSUserDefaults *u=[NSUserDefaults standardUserDefaults];
@@ -442,10 +469,11 @@ static NSArray<Disp *> *enumerateDisplays(void) {
 
 - (void)loadValues {
     for (Disp *d in self.displays) {
-        int b=[self storedB:d], c=[self storedC:d];
-        d.wB.intValue=b; d.mB.intValue=b;
-        d.wBVal.stringValue=[NSString stringWithFormat:@"%d",b];
-        d.mBLab.stringValue=[NSString stringWithFormat:@"Brightness   %d",b];
+        double b=[self storedB:d]; int c=[self storedC:d];
+        d.curB=b;
+        d.wB.doubleValue=b; d.mB.doubleValue=b;
+        d.wBVal.stringValue=[NSString stringWithFormat:@"%d",(int)llround(b)];
+        d.mBLab.stringValue=[NSString stringWithFormat:@"Brightness   %d",(int)llround(b)];
         if (!d.builtin) {
             d.wC.intValue=c; d.mC.intValue=c;
             d.wCVal.stringValue=[NSString stringWithFormat:@"%d",c];
