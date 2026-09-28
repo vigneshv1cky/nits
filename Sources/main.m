@@ -90,6 +90,7 @@ static DDCState ddcSetOn(IOAVServiceRef av, uint8_t vcp, uint16_t v) {
 @property (strong) NSString *name;
 @property BOOL builtin;
 @property (assign) IOAVServiceRef av;
+@property BOOL nativeBrightness;
 @property DDCState state;
 @property (strong) NSTextField *wStatus;
 // ui
@@ -153,9 +154,11 @@ static NSArray<Disp *> *enumerateDisplays(void) {
         d.did = n.unsignedIntValue;
         d.builtin = CGDisplayIsBuiltin(d.did);
         d.name = s.localizedName ?: (d.builtin ? @"Built-in Display" : @"External Display");
+        d.nativeBrightness = DisplayServicesCanChangeBrightness(d.did) ? YES : NO;
         if (!d.builtin) {
             d.av = avForToken(tokenForDisplay(d.did));
-            d.state = d.av ? DDCOk : DDCNoChannel;
+            // a missing DDC channel only matters when there is no native path either
+            d.state = (d.av || d.nativeBrightness) ? DDCOk : DDCNoChannel;
         }
         [out addObject:d];
     }
@@ -182,8 +185,12 @@ static NSArray<Disp *> *enumerateDisplays(void) {
 
 - (void)applyBrightness:(int)v to:(Disp *)d {
     if (v<0) v=0; if (v>100) v=100;
-    if (d.builtin) DisplayServicesSetBrightness(d.did, v/100.0f);
-    else { d.state = ddcSetOn(d.av, 0x10, v); [self refreshStatus:d]; }
+    if (d.nativeBrightness) {
+        DisplayServicesSetBrightness(d.did, v/100.0f);
+    } else {
+        d.state = ddcSetOn(d.av, 0x10, v);
+        [self refreshStatus:d];
+    }
     d.wB.intValue=v; d.mB.intValue=v;
     d.wBVal.stringValue=[NSString stringWithFormat:@"%d",v];
     d.mBLab.stringValue=[NSString stringWithFormat:@"Brightness   %d",v];
@@ -191,7 +198,7 @@ static NSArray<Disp *> *enumerateDisplays(void) {
 }
 
 - (void)applyContrast:(int)v to:(Disp *)d {
-    if (d.builtin) return;
+    if (d.builtin || !d.av) return;
     if (v<0) v=0; if (v>100) v=100;
     d.state = ddcSetOn(d.av, 0x12, v); [self refreshStatus:d];
     d.wC.intValue=v; d.mC.intValue=v;
@@ -274,7 +281,7 @@ static NSArray<Disp *> *enumerateDisplays(void) {
     self.displays = enumerateDisplays();
     CGFloat W=440, M=28, CW=W-M*2;
     CGFloat CH=20;
-    for (Disp *d in self.displays) CH += d.builtin ? 140 : 300;
+    for (Disp *d in self.displays) CH += (d.builtin || !d.av) ? 140 : 300;
     if (CH<220) CH=220;
     CGFloat H = CH;
 
@@ -310,8 +317,10 @@ static NSArray<Disp *> *enumerateDisplays(void) {
         [doc addSubview:[self lab:d.name f:NSMakeRect(M,y,CW,19) sz:14 w:NSFontWeightSemibold
                              col:[NSColor labelColor] al:NSTextAlignmentLeft]];
         y-=20;
-        NSString *sub = d.builtin ? @"Built-in  ·  native macOS control"
-                                  : @"External  ·  hardware backlight over DDC";
+        NSString *where = d.builtin ? @"Built-in" : @"External";
+        NSString *how = d.nativeBrightness ? @"native macOS control"
+                                           : @"hardware backlight over DDC";
+        NSString *sub = [NSString stringWithFormat:@"%@  ·  %@", where, how];
         [doc addSubview:[self lab:sub f:NSMakeRect(M,y,CW,15) sz:11 w:NSFontWeightRegular
                              col:[NSColor secondaryLabelColor] al:NSTextAlignmentLeft]];
         y-=16;
@@ -331,7 +340,7 @@ static NSArray<Disp *> *enumerateDisplays(void) {
         [doc addSubview:d.wB];
         y-=40;
 
-        if (!d.builtin) {
+        if (!d.builtin && d.av) {
             [doc addSubview:[self lab:@"CONTRAST" f:NSMakeRect(M,y,160,14) sz:10 w:NSFontWeightSemibold
                                  col:[NSColor secondaryLabelColor] al:NSTextAlignmentLeft]];
             d.wCVal=[self lab:@"" f:NSMakeRect(W-M-60,y-4,60,20) sz:17 w:NSFontWeightMedium
@@ -388,7 +397,7 @@ static NSArray<Disp *> *enumerateDisplays(void) {
     CGFloat PW=272;
 
     for (Disp *d in self.displays) {
-        CGFloat ph = d.builtin ? 116 : 164;
+        CGFloat ph = (d.builtin || !d.av) ? 116 : 164;
         NSView *p=[[NSView alloc] initWithFrame:NSMakeRect(0,0,PW,ph)];
         CGFloat py=ph-20;
         NSString *hdr=[NSString stringWithFormat:@"%@  ·  %@",
@@ -401,7 +410,7 @@ static NSArray<Disp *> *enumerateDisplays(void) {
         [p addSubview:d.mBLab]; py-=24;
         d.mB=[self sl:NSMakeRect(14,py,PW-28,20) act:@selector(bMoved:) for:d];
         [p addSubview:d.mB]; py-=26;
-        if (!d.builtin) {
+        if (!d.builtin && d.av) {
             d.mCLab=[self lab:@"" f:NSMakeRect(14,py,PW-28,16) sz:12 w:NSFontWeightMedium
                            col:[NSColor labelColor] al:NSTextAlignmentLeft];
             [p addSubview:d.mCLab]; py-=24;
@@ -446,7 +455,11 @@ static NSArray<Disp *> *enumerateDisplays(void) {
     }
 }
 
-- (void)screensChanged { [self buildWindow]; [self buildMenuBar]; [self loadValues]; [self showWindow:nil]; }
+- (void)screensChanged {
+    BOOL wasVisible = self.win.isVisible;
+    [self buildWindow]; [self buildMenuBar]; [self loadValues];
+    if (wasVisible) [self showWindow:nil];      // only reopen if it was already open
+}
 
 - (void)setAppIcon {
     // macOS icon grid: artwork occupies ~80% of the canvas, with transparent margins
@@ -477,7 +490,7 @@ static NSArray<Disp *> *enumerateDisplays(void) {
     [self setAppIcon]; [self buildWindow]; [self buildMenuBar]; [self loadValues];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(screensChanged)
         name:NSApplicationDidChangeScreenParametersNotification object:nil];
-    [self showWindow:nil];
+    // start quietly in the menu bar; the window opens on request
 }
 @end
 
